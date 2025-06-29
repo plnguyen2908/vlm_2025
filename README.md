@@ -1,9 +1,13 @@
 # Flare_2025
 
+## Step 1: Run preprocess
+
 ```
-find . -type f -name '*.zip' -print0 \
-  | while IFS= read -r -d '' zipfile; do
-      dir="$(dirname "$zipfile")"
-      unzip -o "$zipfile" -d "$dir"
-    done
+python preprocessing.py \
+    --base_dir /path/to/dataset \
+    --output_dir /path/to/processed_dataset
 ```
+
+## Step 2: Run train.py
+
+Please look at Makefile
