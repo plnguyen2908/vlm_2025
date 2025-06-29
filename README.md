@@ -11,3 +11,5 @@ python preprocessing.py \
 ## Step 2: Run train.py
 
 Please look at Makefile
+
+## model's architecture is stored in model
