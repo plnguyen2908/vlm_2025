@@ -41,7 +41,7 @@ train_8bit_quantization:
     --model_id google/paligemma2-10b-pt-224 \
     --train_data_path processed_dataset/train \
     --val_data_path processed_dataset/validation \
-    --output_dir fintuned_paligemma2_8bit_4_gpus \
+    --output_dir finetuned_paligemma2_8bit_4_gpus \
     --num_train_epochs 3 \
     --per_device_train_batch_size 2 \
     --gradient_accumulation_steps 32 \

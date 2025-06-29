@@ -10,12 +10,13 @@ from transformers import (
     Trainer,
     BitsAndBytesConfig,
 )
+from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 from peft import get_peft_model, LoraConfig
 from model.builder import attach_connector_to_paligema
+from model.connector import Connector
 from torch.utils.data import Dataset
 from PIL import Image
 import json, re, ast
-from model.connector import Connector
 
 # -----------------------------------------------------------------------------
 # 1. Argument Parsing
@@ -214,7 +215,24 @@ def setup_peft_and_quant(args):
     return lora_config, quant_config
 
 # -----------------------------------------------------------------------------
-# 4. Main Training Pipeline
+# 4. Custom Trainer to save connector & projector
+# -----------------------------------------------------------------------------
+class CustomTrainer(Trainer):
+    def _save_checkpoint(self, model, trial, metrics=None):
+        # default checkpoint folder
+        checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
+        output_dir = os.path.join(self.args.output_dir, checkpoint_folder)
+        # save config and adapter
+        super(CustomTrainer, self)._save_checkpoint(model, trial, metrics)
+        # save connector
+        if hasattr(model, 'connector'):
+            torch.save(model.connector.state_dict(), os.path.join(output_dir, 'connector.pt'))
+        # save projector
+        if hasattr(model, 'multi_modal_projector'):
+            torch.save(model.multi_modal_projector.state_dict(), os.path.join(output_dir, 'projector.pt'))
+
+# -----------------------------------------------------------------------------
+# 5. Main Training Pipeline
 # -----------------------------------------------------------------------------
 def main():
     args = parse_args()
@@ -301,7 +319,7 @@ def main():
         remove_unused_columns=False,
         ddp_find_unused_parameters=False
     )
-    trainer = Trainer(
+    trainer = CustomTrainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,

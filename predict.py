@@ -5,20 +5,15 @@ from peft import PeftModel
 from model.connector import Connector
 from model.builder import attach_connector_to_paligema
 
-def reload_from_trainer(output_dir: str, base_model_id: str, quant: str):
-    # 1) Processor
+def reload_from_trainer(ckpt_path: str, base_model_id: str, quant: str):
     processor = PaliGemmaProcessor.from_pretrained(base_model_id)
 
-    # 2) Base model với cùng quant config
-    #    (load_in_4bit/8bit được lưu trong pytorch_model.bin, HF tự nhận)
     model = PaliGemmaForConditionalGeneration.from_pretrained(
         base_model_id,
-        device_map="auto",
+        device_map={"": 0},
         low_cpu_mem_usage=True,
         attn_implementation="eager",
     )
-    model.enable_input_require_grads()
-    model.gradient_checkpointing_enable()
 
     # 3) Tạo và attach connector
     connector = Connector(model.config.vision_config, quant=quant)
@@ -28,14 +23,10 @@ def reload_from_trainer(output_dir: str, base_model_id: str, quant: str):
         connector=connector
     )
 
-    # 4) Load full state_dict (base + projector + connector + LoRA)
-    state = torch.load(os.path.join(output_dir, "pytorch_model.bin"), map_location="cpu")
-    model.load_state_dict(state, strict=False)
-
     # 5) Wrap PEFT và load LoRA adapters
     model = PeftModel.from_pretrained(
         model,
-        output_dir,
+        ckpt_path,
         is_trainable=False
     )
 
@@ -43,13 +34,13 @@ def reload_from_trainer(output_dir: str, base_model_id: str, quant: str):
 
 if __name__ == "__main__":
     proc, full_model = reload_from_trainer(
-        output_dir="fintuned_pg2",
+        ckpt_path="fintuned_paligemma2_8bit_4_gpus/checkpoint-500",
         base_model_id="google/paligemma2-10b-pt-224",
-        quant="4bit"
+        quant="8bit"
     )
     full_model.eval()
     # Xác nhận
-    batch = next(iter(your_dataloader))  
-    batch = {k:v.to(full_model.device) for k,v in batch.items()}
-    out = full_model(**batch)
-    print("Reload OK, logits shape:", out.logits.shape)
+    # batch = next(iter(your_dataloader))  
+    # batch = {k:v.to(full_model.device) for k,v in batch.items()}
+    # out = full_model(**batch)
+    # print("Reload OK, logits shape:", out.logits.shape)
