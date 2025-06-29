@@ -1,0 +1,58 @@
+{
+  "train_samples": 45823,
+  "val_samples": 5577,
+  "processed_datasets": [
+    "bcn20000",
+    "IU_XRay",
+    "iugc",
+    "chestdr",
+    "endo",
+    "CMMD",
+    "periapical",
+    "neojaundice",
+    "chromosome",
+    "retino",
+    "neurips22cell",
+    "bone_marrow",
+    "boneresorption",
+    "dental",
+    "fundus",
+    "BUSI",
+    "BUS-UCLM",
+    "BUSI-det",
+    "BUS-UCLM-det"
+  ],
+  "task_types": [
+    "detection",
+    "Multi-label Classification",
+    "Counting",
+    "Detection",
+    "instance_detection",
+    "regression",
+    "Report_Generation",
+    "classification",
+    "Regression",
+    "Classification",
+    "multi-label classification"
+  ],
+  "modalities": [
+    "Ultrasound",
+    "X-Ray",
+    "Retinography",
+    "Fundus",
+    "Microscopy",
+    "X-ray",
+    "Digital Camera",
+    "microscopy",
+    "Mammography",
+    "Dermoscopy"
+  ],
+  "config": {
+    "base_dir": "data",
+    "output_dir": "processed_dataset",
+    "max_samples": null,
+    "val_ratio": 0.2,
+    "include_datasets": null,
+    "exclude_datasets": null
+  }
+}
