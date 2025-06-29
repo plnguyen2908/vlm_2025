@@ -12,4 +12,4 @@ python preprocessing.py \
 
 Please look at Makefile
 
-## model's architecture is stored in model
+## Model's architecture is stored in model
