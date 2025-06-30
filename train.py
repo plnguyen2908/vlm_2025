@@ -221,9 +221,12 @@ class CustomTrainer(Trainer):
     def _save_checkpoint(self, model, trial, metrics=None):
         # default checkpoint folder
         checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
-        output_dir = os.path.join(self.args.output_dir, checkpoint_folder)
+        run_dir = self._get_output_dir(trial=trial)
+        output_dir = os.path.join(run_dir, checkpoint_folder)
+
         # save config and adapter
-        super(CustomTrainer, self)._save_checkpoint(model, trial, metrics)
+        super(CustomTrainer, self)._save_checkpoint(model, trial)
+        self.model.config.save_pretrained(output_dir)
         # save connector
         if hasattr(model, 'connector'):
             torch.save(model.connector.state_dict(), os.path.join(output_dir, 'connector.pt'))
@@ -290,6 +293,14 @@ def main():
         else:
             param.requires_grad = False
     model.print_trainable_parameters()
+    print("=== Trainable parameters (excluding LoRA) ===")
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if "lora" in name.lower():
+            continue
+        print(f"{name:60s} {tuple(param.shape)}")
+
 
     print("Modules with requires_grad=True and parameter counts:")
 
@@ -308,11 +319,11 @@ def main():
         gradient_checkpointing=True,
         save_strategy="steps",
         save_steps=args.save_steps,
-        eval_accumulation_steps=1,
-        per_device_eval_batch_size=4,
         save_total_limit=args.save_total_limit,
         eval_steps=args.eval_steps,
         eval_strategy="steps",
+        per_device_eval_batch_size=4,
+        eval_accumulation_steps=1,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
