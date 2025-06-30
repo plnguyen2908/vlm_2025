@@ -50,8 +50,8 @@ train_8bit_quantization:
     --lora_r 16 \
     --lora_alpha 32 \
     --lora_dropout 0.05 \
-    --save_steps 100 \
-    --eval_steps 100 \
+    --save_steps 200 \
+    --eval_steps 200 \
     --logging_steps 10 \
 	--quant 8bit \
 	--gpu_ids 0,1,2,3
