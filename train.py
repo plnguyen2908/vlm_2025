@@ -35,7 +35,7 @@ def parse_args():
     parser.add_argument("--warmup_ratio", type=float, default=0.03)
     parser.add_argument("--save_steps", type=int, default=100)
     parser.add_argument("--eval_steps", type=int, default=100)
-    parser.add_argument("--save_total_limit", type=int, default=100)
+    parser.add_argument("--save_total_limit", type=int, default=5)
     parser.add_argument("--lora_r", type=int, default=16)
     parser.add_argument("--lora_alpha", type=int, default=32)
     parser.add_argument("--lora_dropout", type=float, default=0.05)
@@ -56,12 +56,11 @@ def parse_args():
 # 2. Dataset & Collator
 # -----------------------------------------------------------------------------
 class ImageQADataset(Dataset):
-    def __init__(self, ds, processor, max_images=5, image_token="<image>", task_type="vqa"):
+    def __init__(self, ds, processor, max_images=5, image_token="<image>"):
         self.ds = ds
         self.processor = processor
         self.max_images = max_images
         self.image_token = image_token
-        self.task_type = task_type
 
         print(f"Dataset loaded with {len(self.ds)} samples")
 
@@ -90,6 +89,7 @@ class ImageQADataset(Dataset):
 
     def __getitem__(self, idx):
         sample = self.ds[idx]
+        # print(sample)
         # prepare images list
         imgs = sample.get("image")
         imgs = imgs if isinstance(imgs, list) else [imgs]
@@ -108,8 +108,9 @@ class ImageQADataset(Dataset):
 
         raw_answer = sample.get("answer", "").strip()
         answer_text = raw_answer
-
-        if self.task_type == "detection":
+        task_type = sample["task_type"]
+        
+        if task_type.lower() == "detection":
             # single-image detection
             W, H = pil_imgs[0].size
             bboxes = []
@@ -126,7 +127,7 @@ class ImageQADataset(Dataset):
                     bboxes.append("".join(tokens))
             answer_text = json.dumps(bboxes)
 
-        elif self.task_type == "instance_detection":
+        elif task_type.lower() == "instance_detection":
             # multiple instances per category
             W, H = pil_imgs[0].size
             inst_map = {}
@@ -151,13 +152,13 @@ class ImageQADataset(Dataset):
             # serialize grouping to JSON
             answer_text = json.dumps(inst_map)
 
-        # else: 'vqa' uses raw answer_text
+            # print(answer_text)
 
         return {
             "images": pil_imgs,
             "question": formatted_question,
             "answer": answer_text,
-            "task_type": self.task_type,
+            "task_type": task_type,
         }
 
 def create_collate_fn(processor):
@@ -178,6 +179,7 @@ def create_collate_fn(processor):
         input_ids = tokenized.input_ids.to(torch.long)
         attention_mask = tokenized.attention_mask.to(torch.long)
         token_type_ids = tokenized.token_type_ids.to(torch.long)
+        # print(token_type_ids)
         labels = input_ids.masked_fill(token_type_ids == 0, -100).to(torch.long)
 
         return {
@@ -218,21 +220,52 @@ def setup_peft_and_quant(args):
 # 4. Custom Trainer to save connector & projector
 # -----------------------------------------------------------------------------
 class CustomTrainer(Trainer):
-    def _save_checkpoint(self, model, trial, metrics=None):
-        # default checkpoint folder
-        checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
-        run_dir = self._get_output_dir(trial=trial)
-        output_dir = os.path.join(run_dir, checkpoint_folder)
+    def __init__(self, processor, quant_config, base_model_id, lora_args, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.processor = processor
+        self.quant_config = quant_config
+        self.base_model_id = base_model_id
+        self.lora_args = lora_args
 
-        # save config and adapter
-        super(CustomTrainer, self)._save_checkpoint(model, trial)
-        self.model.config.save_pretrained(output_dir)
-        # save connector
+    def _save_checkpoint(self, model, trial, metrics=None):
+        ckpt_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
+        out_dir = os.path.join(self.args.output_dir, ckpt_folder)
+
+        # 1) Base save: config + LoRA adapter
+        super()._save_checkpoint(model, trial)
+        model.config.save_pretrained(out_dir)
+
+        # 2) Save connector & projector
         if hasattr(model, 'connector'):
-            torch.save(model.connector.state_dict(), os.path.join(output_dir, 'connector.pt'))
-        # save projector
+            torch.save(model.connector.state_dict(), os.path.join(out_dir, 'connector.pt'))
         if hasattr(model, 'multi_modal_projector'):
-            torch.save(model.multi_modal_projector.state_dict(), os.path.join(output_dir, 'projector.pt'))
+            torch.save(model.multi_modal_projector.state_dict(), os.path.join(out_dir, 'projector.pt'))
+
+        # 3) Save base+connector without LoRA
+        #    Instantiate new base and attach connector
+        base_clone = PaliGemmaForConditionalGeneration.from_pretrained(
+            self.base_model_id,
+            quantization_config=self.quant_config,
+            device_map='auto',
+            low_cpu_mem_usage=True,
+            attn_implementation='eager'
+        )
+        conn_clone = Connector(base_clone.config.vision_config, quant=self.lora_args.quant)
+        base_clone = attach_connector_to_paligema(
+            base_clone.config.vision_config, base_clone, connector=conn_clone
+        )
+        # Load matching params (no LoRA)
+        base_clone.load_state_dict(model.state_dict(), strict=False)
+        torch.save(base_clone.state_dict(), os.path.join(out_dir, 'pytorch_model.bin'))
+
+        # 4) Save merged full model (base+connector+LoRA)
+        # merged = model.merge_and_unload()
+        # merged.save_pretrained(out_dir)
+
+        # 5) Save quant config for inference
+        if self.quant_config is not None:
+            with open(os.path.join(out_dir, 'quant_config.json'), 'w') as f:
+                json.dump(self.quant_config.to_dict(), f)
 
 # -----------------------------------------------------------------------------
 # 5. Main Training Pipeline
@@ -252,17 +285,11 @@ def main():
 
     # 4.3 Load model với quant & device map
 
-    # DDP: pin this process to its GPU, then load the model there
-    # local_rank = int(os.environ["LOCAL_RANK"])
-    # torch.cuda.set_device(local_rank)
-
     model = PaliGemmaForConditionalGeneration.from_pretrained(
         args.model_id,
         quantization_config=quant_cfg,
         # uncomment if you want model parallel instead of data parallel
         device_map="auto",
-        # DDP: pin this process to its GPU, then load the model there
-        # device_map={ "": local_rank },
         low_cpu_mem_usage=True,
         attn_implementation="eager",
     )
@@ -274,11 +301,6 @@ def main():
     # 4.4 Attach connector
     connector = Connector(model.config.vision_config, args.quant)
     model = attach_connector_to_paligema(model.config.vision_config, model, connector=connector)
-
-    # DDP: pin this process to its GPU, then load the model there
-    # device = torch.device(f"cuda:{local_rank}")
-    # model.connector.to(device)
-    # model.model.connector.to(device)
 
     # 4.5 Apply LoRA
     model = get_peft_model(model, lora_cfg)
@@ -293,13 +315,6 @@ def main():
         else:
             param.requires_grad = False
     model.print_trainable_parameters()
-    print("=== Trainable parameters (excluding LoRA) ===")
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        if "lora" in name.lower():
-            continue
-        print(f"{name:60s} {tuple(param.shape)}")
 
 
     print("Modules with requires_grad=True and parameter counts:")
@@ -309,33 +324,46 @@ def main():
         output_dir=args.output_dir,
         logging_dir=args.logging_dir,
         logging_steps=args.logging_steps,
+
         num_train_epochs=args.num_train_epochs,
         per_device_train_batch_size=args.per_device_train_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         learning_rate=args.learning_rate,
         warmup_ratio=args.warmup_ratio,
+
         bf16=True, fp16=False,
         optim="paged_adamw_8bit",
         gradient_checkpointing=True,
+        max_grad_norm=1.0,
+
         save_strategy="steps",
         save_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
+
         eval_steps=args.eval_steps,
         eval_strategy="steps",
         per_device_eval_batch_size=4,
-        eval_accumulation_steps=1,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
+
+        dataloader_num_workers=2,
+        dataloader_pin_memory=True,
         remove_unused_columns=False,
-        ddp_find_unused_parameters=False
+        ddp_find_unused_parameters=False,
+
+        label_names=["labels"],
     )
     trainer = CustomTrainer(
+        processor=proc,
+        quant_config=quant_cfg,
+        base_model_id=args.model_id,
+        lora_args=args,
         model=model,
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=val_ds,
-        data_collator=create_collate_fn(proc),
+        data_collator=create_collate_fn(proc)
     )
 
     # 4.8 Train

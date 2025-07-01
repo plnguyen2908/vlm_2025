@@ -30,7 +30,7 @@ def attach_connector_to_paligema(
     # The actual vision→projector lives in model.model (PaliGemmaModel)
     pmodel = paligema.model
     pmodel.add_module("connector", connector)
-    paligema.add_module("connector", connector)
+    # paligema.add_module("connector", connector)
 
     def new_get_image_features(pixel_values: torch.Tensor) -> torch.Tensor:
         # 1) run vision_tower with hidden_states
@@ -64,6 +64,6 @@ def attach_connector_to_paligema(
     
     # overwrite both model.model and convenience wrapper on paligema
     pmodel.get_image_features = new_get_image_features
-    paligema.get_image_features = new_get_image_features
+    # paligema.get_image_features = new_get_image_features
 
     return paligema

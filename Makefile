@@ -44,14 +44,14 @@ train_8bit_quantization:
     --output_dir finetuned_paligemma2_8bit_4_gpus \
     --num_train_epochs 3 \
     --per_device_train_batch_size 2 \
-    --gradient_accumulation_steps 32 \
+    --gradient_accumulation_steps 16 \
     --learning_rate 5e-5 \
     --warmup_ratio 0.03 \
     --lora_r 16 \
     --lora_alpha 32 \
     --lora_dropout 0.05 \
-    --save_steps 200 \
-    --eval_steps 200 \
+    --save_steps 500 \
+    --eval_steps 500 \
     --logging_steps 10 \
 	--quant 8bit \
 	--gpu_ids 0,1,2,3
